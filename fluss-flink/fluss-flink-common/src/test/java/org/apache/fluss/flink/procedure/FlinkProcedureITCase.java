@@ -29,6 +29,7 @@ import org.apache.fluss.config.MemorySize;
 import org.apache.fluss.exception.NoRebalanceInProgressException;
 import org.apache.fluss.exception.SecurityDisabledException;
 import org.apache.fluss.metadata.DataLakeFormat;
+import org.apache.fluss.metadata.PartitionSpec;
 import org.apache.fluss.metadata.TablePath;
 import org.apache.fluss.row.InternalRow;
 import org.apache.fluss.server.testutils.FlussClusterExtension;
@@ -48,8 +49,13 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import javax.annotation.Nullable;
+
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -134,6 +140,7 @@ public abstract class FlinkProcedureITCase {
             List<String> expectedShowProceduresResult =
                     Arrays.asList(
                             "+I[sys.add_acl]",
+                            "+I[sys.describe_buckets]",
                             "+I[sys.drop_acl]",
                             "+I[sys.get_cluster_configs]",
                             "+I[sys.list_acl]",
@@ -374,6 +381,62 @@ public abstract class FlinkProcedureITCase {
                                 CATALOG_NAME,
                                 ConfigOptions.KV_SHARED_RATE_LIMITER_BYTES_PER_SEC.key()))
                 .await();
+    }
+
+    @Test
+    void testDescribeBucketsProcedure() throws Exception {
+        String tableName = "describe_buckets_table";
+        tEnv.executeSql(
+                        String.format(
+                                "create table %s (id int, name string) "
+                                        + "with ('bucket.num' = '2')",
+                                tableName))
+                .await();
+        TablePath tablePath = TablePath.of(DEFAULT_DB, tableName);
+        long tableId = admin.getTableInfo(tablePath).get().getTableId();
+
+        List<Row> tableBucketRows = waitAndDescribeBuckets(tablePath.toString(), null, 2);
+        assertBucketRows(tableBucketRows, tablePath.toString(), tableId, 2);
+        assertThat(tableBucketRows).extracting(row -> row.getField(2)).containsOnlyNulls();
+        assertThat(tableBucketRows).extracting(row -> row.getField(3)).containsOnlyNulls();
+        assertThat(tableBucketRows)
+                .extracting(row -> row.getField(4))
+                .containsExactlyInAnyOrder(0, 1);
+
+        String partitionedTableName = "describe_buckets_partitioned_table";
+        tEnv.executeSql(
+                        String.format(
+                                "create table %s (id int, name string, pt string) "
+                                        + "partitioned by (pt) "
+                                        + "with ('bucket.num' = '2')",
+                                partitionedTableName))
+                .await();
+        TablePath partitionedTablePath = TablePath.of(DEFAULT_DB, partitionedTableName);
+        long partitionedTableId = admin.getTableInfo(partitionedTablePath).get().getTableId();
+        admin.createPartition(
+                        partitionedTablePath,
+                        new PartitionSpec(Collections.singletonMap("pt", "p1")),
+                        false)
+                .get();
+        admin.createPartition(
+                        partitionedTablePath,
+                        new PartitionSpec(Collections.singletonMap("pt", "p2")),
+                        false)
+                .get();
+
+        List<Row> allPartitionBucketRows =
+                waitAndDescribeBuckets(partitionedTablePath.toString(), null, 4);
+        assertBucketRows(
+                allPartitionBucketRows, partitionedTablePath.toString(), partitionedTableId, 4);
+        assertThat(allPartitionBucketRows)
+                .extracting(row -> row.getField(3))
+                .containsExactlyInAnyOrder("p1", "p1", "p2", "p2");
+
+        List<Row> p1BucketRows =
+                waitAndDescribeBuckets(partitionedTablePath.toString(), "pt=p1", 2);
+        assertBucketRows(p1BucketRows, partitionedTablePath.toString(), partitionedTableId, 2);
+        assertThat(p1BucketRows).extracting(row -> row.getField(3)).containsOnly("p1");
+        assertThat(p1BucketRows).extracting(row -> row.getField(4)).containsExactly(0, 1);
     }
 
     @Test
@@ -845,6 +908,79 @@ public abstract class FlinkProcedureITCase {
         conf.set(ConfigOptions.SUPER_USERS, "User:root");
         conf.set(ConfigOptions.AUTHORIZER_ENABLED, true);
         return conf;
+    }
+
+    private List<Row> waitAndDescribeBuckets(
+            String tablePath, @Nullable String partitionSpec, int expectedBucketCount)
+            throws Exception {
+        retry(
+                Duration.ofMinutes(1),
+                () -> {
+                    List<Row> rows = describeBuckets(tablePath, partitionSpec);
+                    assertThat(rows).hasSize(expectedBucketCount);
+                    assertThat(rows)
+                            .allSatisfy(
+                                    row -> {
+                                        assertThat(row.getField(5)).isNotNull();
+                                        assertThat(row.getField(6)).isNotNull();
+                                        assertThat(toIntegerList(row.getField(7))).isNotEmpty();
+                                        assertThat(toIntegerList(row.getField(8))).isNotEmpty();
+                                    });
+                });
+        return describeBuckets(tablePath, partitionSpec);
+    }
+
+    private List<Row> describeBuckets(String tablePath, @Nullable String partitionSpec)
+            throws Exception {
+        String sql =
+                partitionSpec == null
+                        ? String.format(
+                                "Call %s.sys.describe_buckets('%s')", CATALOG_NAME, tablePath)
+                        : String.format(
+                                "Call %s.sys.describe_buckets('%s', '%s')",
+                                CATALOG_NAME, tablePath, partitionSpec);
+        try (CloseableIterator<Row> resultIterator = tEnv.executeSql(sql).collect()) {
+            return CollectionUtil.iteratorToList(resultIterator);
+        }
+    }
+
+    private static void assertBucketRows(
+            List<Row> rows, String tablePath, long tableId, int expectedBucketCount) {
+        assertThat(rows).hasSize(expectedBucketCount);
+        assertThat(rows).extracting(row -> row.getField(0)).containsOnly(tablePath);
+        assertThat(rows).extracting(row -> row.getField(1)).containsOnly(tableId);
+        rows.forEach(
+                row -> {
+                    Integer leaderId = (Integer) row.getField(5);
+                    List<Integer> replicas = toIntegerList(row.getField(7));
+                    List<Integer> isr = toIntegerList(row.getField(8));
+                    assertThat(replicas).hasSize(3);
+                    assertThat(isr).isNotEmpty();
+                    assertThat(replicas).containsAll(isr);
+                    assertThat(isr).contains(leaderId);
+                });
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Integer> toIntegerList(Object value) {
+        if (value instanceof int[]) {
+            int[] values = (int[]) value;
+            List<Integer> result = new ArrayList<>(values.length);
+            for (int intValue : values) {
+                result.add(intValue);
+            }
+            return result;
+        } else if (value instanceof Object[]) {
+            return Arrays.stream((Object[]) value)
+                    .map(number -> ((Number) number).intValue())
+                    .collect(Collectors.toList());
+        } else if (value instanceof Collection) {
+            return ((Collection<?>) value)
+                    .stream()
+                            .map(number -> ((Number) number).intValue())
+                            .collect(Collectors.toList());
+        }
+        throw new AssertionError("Unsupported ARRAY<INT> value: " + value);
     }
 
     private static void assertCallResult(CloseableIterator<Row> rows, String[] expected) {
