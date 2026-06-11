@@ -920,7 +920,11 @@ class CoordinatorEventProcessorTest {
                                         tableInfo,
                                         Collections.singletonList(
                                                 new BucketMetadata(
-                                                        0, replicas.get(0), 0, replicas)))));
+                                                        0,
+                                                        replicas.get(0),
+                                                        0,
+                                                        replicas,
+                                                        replicas)))));
 
         // alter table column.
         alterTable(
@@ -979,7 +983,11 @@ class CoordinatorEventProcessorTest {
                                         tableInfo,
                                         Collections.singletonList(
                                                 new BucketMetadata(
-                                                        0, replicas.get(0), 0, replicas)))));
+                                                        0,
+                                                        replicas.get(0),
+                                                        0,
+                                                        replicas,
+                                                        replicas)))));
 
         // alter table properties (custom property)
         TablePropertyChanges.Builder builder = TablePropertyChanges.builder();

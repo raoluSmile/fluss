@@ -21,9 +21,13 @@ import org.apache.fluss.client.write.KvWriteBatch;
 import org.apache.fluss.client.write.ReadyWriteBatch;
 import org.apache.fluss.memory.MemorySegment;
 import org.apache.fluss.memory.PreAllocatedPagedOutputView;
+import org.apache.fluss.metadata.BucketInfo;
 import org.apache.fluss.metadata.KvFormat;
 import org.apache.fluss.metadata.PhysicalTablePath;
 import org.apache.fluss.metadata.TableBucket;
+import org.apache.fluss.metadata.TablePath;
+import org.apache.fluss.rpc.messages.DescribeBucketsResponse;
+import org.apache.fluss.rpc.messages.PbBucketInfo;
 import org.apache.fluss.rpc.messages.PutKvRequest;
 import org.apache.fluss.rpc.protocol.MergeMode;
 
@@ -124,6 +128,53 @@ class ClientRpcMessageUtilsTest {
                 ClientRpcMessageUtils.makePutKvRequest(TABLE_ID, ACKS, TIMEOUT_MS, readyBatches);
 
         assertThat(request.getAggMode()).isEqualTo(MergeMode.OVERWRITE.getProtoValue());
+    }
+
+    @Test
+    void testToBucketInfos() {
+        DescribeBucketsResponse response = new DescribeBucketsResponse();
+        PbBucketInfo tableBucket =
+                response.addBucketInfo().setTableId(10L).setBucketId(0).setLeaderId(1);
+        tableBucket.setTablePath().setDatabaseName("db").setTableName("table");
+        tableBucket.setLeaderEpoch(7);
+        tableBucket.addReplicaId(1);
+        tableBucket.addReplicaId(2);
+        tableBucket.addReplicaId(3);
+        tableBucket.addIsrId(1);
+        tableBucket.addIsrId(3);
+
+        PbBucketInfo partitionBucket = response.addBucketInfo().setTableId(10L).setBucketId(1);
+        partitionBucket.setTablePath().setDatabaseName("db").setTableName("table");
+        partitionBucket.setPartitionId(100L).setPartitionName("p1");
+        partitionBucket.addReplicaId(2);
+        partitionBucket.addReplicaId(3);
+
+        List<BucketInfo> bucketInfos = ClientRpcMessageUtils.toBucketInfos(response);
+
+        assertThat(bucketInfos).hasSize(2);
+        BucketInfo tableBucketInfo = bucketInfos.get(0);
+        assertThat(tableBucketInfo.getTablePath()).isEqualTo(TablePath.of("db", "table"));
+        assertThat(tableBucketInfo.getTableId()).isEqualTo(10L);
+        assertThat(tableBucketInfo.getPartitionId().isPresent()).isFalse();
+        assertThat(tableBucketInfo.getPartitionName()).isNull();
+        assertThat(tableBucketInfo.getBucketId()).isEqualTo(0);
+        assertThat(tableBucketInfo.getLeaderId().isPresent()).isTrue();
+        assertThat(tableBucketInfo.getLeaderId().getAsInt()).isEqualTo(1);
+        assertThat(tableBucketInfo.getLeaderEpoch().isPresent()).isTrue();
+        assertThat(tableBucketInfo.getLeaderEpoch().getAsInt()).isEqualTo(7);
+        assertThat(tableBucketInfo.getReplicas()).containsExactly(1, 2, 3);
+        assertThat(tableBucketInfo.getIsr()).containsExactly(1, 3);
+
+        BucketInfo partitionBucketInfo = bucketInfos.get(1);
+        assertThat(partitionBucketInfo.getTablePath()).isEqualTo(TablePath.of("db", "table"));
+        assertThat(partitionBucketInfo.getPartitionId().isPresent()).isTrue();
+        assertThat(partitionBucketInfo.getPartitionId().getAsLong()).isEqualTo(100L);
+        assertThat(partitionBucketInfo.getPartitionName()).isEqualTo("p1");
+        assertThat(partitionBucketInfo.getBucketId()).isEqualTo(1);
+        assertThat(partitionBucketInfo.getLeaderId().isPresent()).isFalse();
+        assertThat(partitionBucketInfo.getLeaderEpoch().isPresent()).isFalse();
+        assertThat(partitionBucketInfo.getReplicas()).containsExactly(2, 3);
+        assertThat(partitionBucketInfo.getIsr()).isEmpty();
     }
 
     private KvWriteBatch createKvWriteBatch(int bucketId, MergeMode mergeMode) throws Exception {

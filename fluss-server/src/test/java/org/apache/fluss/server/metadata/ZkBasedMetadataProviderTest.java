@@ -142,10 +142,12 @@ class ZkBasedMetadataProviderTest {
         BucketMetadata bucket0Metadata = bucketMap.get(0);
         assertThat(extractLeaderFromBucketMetadata(bucket0Metadata)).isEqualTo(1);
         assertThat(bucket0Metadata.getReplicas()).containsExactly(1, 2, 3);
+        assertThat(bucket0Metadata.getIsr()).containsExactly(1, 2, 3);
 
         BucketMetadata bucket1Metadata = bucketMap.get(1);
         assertThat(extractLeaderFromBucketMetadata(bucket1Metadata)).isEqualTo(2);
         assertThat(bucket1Metadata.getReplicas()).containsExactly(2, 3, 4);
+        assertThat(bucket1Metadata.getIsr()).containsExactly(2, 3, 4);
     }
 
     @Test
@@ -213,10 +215,12 @@ class ZkBasedMetadataProviderTest {
         BucketMetadata bucket0Metadata = bucketMap.get(0);
         assertThat(extractLeaderFromBucketMetadata(bucket0Metadata)).isEqualTo(1);
         assertThat(bucket0Metadata.getReplicas()).containsExactly(1, 2);
+        assertThat(bucket0Metadata.getIsr()).containsExactly(1, 2);
 
         BucketMetadata bucket1Metadata = bucketMap.get(1);
         assertThat(extractLeaderFromBucketMetadata(bucket1Metadata)).isEqualTo(2);
         assertThat(bucket1Metadata.getReplicas()).containsExactly(2, 3);
+        assertThat(bucket1Metadata.getIsr()).containsExactly(2, 3);
     }
 
     @Test

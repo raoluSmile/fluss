@@ -441,7 +441,8 @@ class MetadataUpdateITCase {
                                                     bucketId,
                                                     leaderAndIsr.leader(),
                                                     leaderAndIsr.leaderEpoch(),
-                                                    replicas));
+                                                    replicas,
+                                                    leaderAndIsr.isr()));
                                 } catch (Exception e) {
                                     throw new RuntimeException(e);
                                 }
@@ -473,7 +474,8 @@ class MetadataUpdateITCase {
                                                     bucketId,
                                                     leaderAndIsr.leader(),
                                                     leaderAndIsr.leaderEpoch(),
-                                                    replicas));
+                                                    replicas,
+                                                    leaderAndIsr.isr()));
                                 } catch (Exception e) {
                                     throw new RuntimeException(e);
                                 }

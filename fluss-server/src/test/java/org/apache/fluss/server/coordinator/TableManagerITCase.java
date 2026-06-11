@@ -762,6 +762,13 @@ class TableManagerITCase {
             for (int replica : allReplicas) {
                 assertThat(liveServers.contains(replica)).isTrue();
             }
+            assertThat(tableBucketMetadata.getIsrIdsCount()).isGreaterThan(0);
+            Set<Integer> isrIds =
+                    Arrays.stream(tableBucketMetadata.getIsrIds())
+                            .boxed()
+                            .collect(Collectors.toSet());
+            assertThat(isrIds).contains(tableBucketMetadata.getLeaderId());
+            assertThat(allReplicas).containsAll(isrIds);
         }
     }
 

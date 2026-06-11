@@ -37,6 +37,7 @@ import org.apache.fluss.config.cluster.ConfigEntry;
 import org.apache.fluss.fs.FsPath;
 import org.apache.fluss.fs.FsPathAndFileName;
 import org.apache.fluss.fs.token.ObtainedSecurityToken;
+import org.apache.fluss.metadata.BucketInfo;
 import org.apache.fluss.metadata.DatabaseChange;
 import org.apache.fluss.metadata.DatabaseSummary;
 import org.apache.fluss.metadata.PartitionInfo;
@@ -50,6 +51,7 @@ import org.apache.fluss.rpc.messages.AcquireKvSnapshotLeaseResponse;
 import org.apache.fluss.rpc.messages.AlterDatabaseRequest;
 import org.apache.fluss.rpc.messages.AlterTableRequest;
 import org.apache.fluss.rpc.messages.CreatePartitionRequest;
+import org.apache.fluss.rpc.messages.DescribeBucketsResponse;
 import org.apache.fluss.rpc.messages.DropPartitionRequest;
 import org.apache.fluss.rpc.messages.GetFileSystemSecurityTokenResponse;
 import org.apache.fluss.rpc.messages.GetKvSnapshotMetadataResponse;
@@ -65,6 +67,7 @@ import org.apache.fluss.rpc.messages.LookupRequest;
 import org.apache.fluss.rpc.messages.MetadataRequest;
 import org.apache.fluss.rpc.messages.PbAddColumn;
 import org.apache.fluss.rpc.messages.PbAlterConfig;
+import org.apache.fluss.rpc.messages.PbBucketInfo;
 import org.apache.fluss.rpc.messages.PbBucketOffset;
 import org.apache.fluss.rpc.messages.PbDatabaseSummary;
 import org.apache.fluss.rpc.messages.PbDescribeConfig;
@@ -605,6 +608,27 @@ public class ClientRpcMessageUtils {
                                                 ? pbPartitionInfo.getRemoteDataDir()
                                                 : null))
                 .collect(Collectors.toList());
+    }
+
+    public static List<BucketInfo> toBucketInfos(DescribeBucketsResponse response) {
+        return response.getBucketInfosList().stream()
+                .map(ClientRpcMessageUtils::toBucketInfo)
+                .collect(Collectors.toList());
+    }
+
+    private static BucketInfo toBucketInfo(PbBucketInfo pbBucketInfo) {
+        return new BucketInfo(
+                TablePath.of(
+                        pbBucketInfo.getTablePath().getDatabaseName(),
+                        pbBucketInfo.getTablePath().getTableName()),
+                pbBucketInfo.getTableId(),
+                pbBucketInfo.hasPartitionId() ? pbBucketInfo.getPartitionId() : null,
+                pbBucketInfo.hasPartitionName() ? pbBucketInfo.getPartitionName() : null,
+                pbBucketInfo.getBucketId(),
+                pbBucketInfo.hasLeaderId() ? pbBucketInfo.getLeaderId() : null,
+                pbBucketInfo.hasLeaderEpoch() ? pbBucketInfo.getLeaderEpoch() : null,
+                Arrays.stream(pbBucketInfo.getReplicaIds()).boxed().collect(Collectors.toList()),
+                Arrays.stream(pbBucketInfo.getIsrIds()).boxed().collect(Collectors.toList()));
     }
 
     public static Map<String, String> toKeyValueMap(List<PbKeyValue> pbKeyValues) {

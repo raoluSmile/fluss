@@ -15,7 +15,9 @@
  * limitations under the License.
  */
 
-package org.apache.fluss.server.metadata;
+package org.apache.fluss.metadata;
+
+import org.apache.fluss.annotation.PublicEvolving;
 
 import javax.annotation.Nullable;
 
@@ -24,34 +26,67 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.OptionalInt;
+import java.util.OptionalLong;
 
-/** This entity used to describe the bucket metadata. */
-public class BucketMetadata {
+import static org.apache.fluss.utils.Preconditions.checkNotNull;
+
+/**
+ * Information of a physical table bucket, including replica assignment and leader/ISR state.
+ *
+ * @since 0.9
+ */
+@PublicEvolving
+public class BucketInfo {
+    private final TablePath tablePath;
+    private final long tableId;
+    private final @Nullable Long partitionId;
+    private final @Nullable String partitionName;
     private final int bucketId;
     private final @Nullable Integer leaderId;
     private final @Nullable Integer leaderEpoch;
     private final List<Integer> replicas;
     private final List<Integer> isr;
 
-    public BucketMetadata(
-            int bucketId,
-            @Nullable Integer leaderId,
-            @Nullable Integer leaderEpoch,
-            List<Integer> replicas) {
-        this(bucketId, leaderId, leaderEpoch, replicas, Collections.emptyList());
-    }
-
-    public BucketMetadata(
+    public BucketInfo(
+            TablePath tablePath,
+            long tableId,
+            @Nullable Long partitionId,
+            @Nullable String partitionName,
             int bucketId,
             @Nullable Integer leaderId,
             @Nullable Integer leaderEpoch,
             List<Integer> replicas,
             List<Integer> isr) {
+        this.tablePath = checkNotNull(tablePath, "tablePath should not be null.");
+        this.tableId = tableId;
+        this.partitionId = partitionId;
+        this.partitionName = partitionName;
         this.bucketId = bucketId;
         this.leaderId = leaderId;
         this.leaderEpoch = leaderEpoch;
-        this.replicas = Collections.unmodifiableList(new ArrayList<>(replicas));
-        this.isr = Collections.unmodifiableList(new ArrayList<>(isr));
+        this.replicas =
+                Collections.unmodifiableList(
+                        new ArrayList<>(checkNotNull(replicas, "replicas should not be null.")));
+        this.isr =
+                Collections.unmodifiableList(
+                        new ArrayList<>(checkNotNull(isr, "isr should not be null.")));
+    }
+
+    public TablePath getTablePath() {
+        return tablePath;
+    }
+
+    public long getTableId() {
+        return tableId;
+    }
+
+    public OptionalLong getPartitionId() {
+        return partitionId == null ? OptionalLong.empty() : OptionalLong.of(partitionId);
+    }
+
+    @Nullable
+    public String getPartitionName() {
+        return partitionName;
     }
 
     public int getBucketId() {
@@ -76,8 +111,17 @@ public class BucketMetadata {
 
     @Override
     public String toString() {
-        return "BucketMetadata{"
-                + "bucketId="
+        return "BucketInfo{"
+                + "tablePath="
+                + tablePath
+                + ", tableId="
+                + tableId
+                + ", partitionId="
+                + partitionId
+                + ", partitionName='"
+                + partitionName
+                + '\''
+                + ", bucketId="
                 + bucketId
                 + ", leaderId="
                 + leaderId
@@ -98,8 +142,12 @@ public class BucketMetadata {
         if (o == null || getClass() != o.getClass()) {
             return false;
         }
-        BucketMetadata that = (BucketMetadata) o;
-        return bucketId == that.bucketId
+        BucketInfo that = (BucketInfo) o;
+        return tableId == that.tableId
+                && bucketId == that.bucketId
+                && Objects.equals(tablePath, that.tablePath)
+                && Objects.equals(partitionId, that.partitionId)
+                && Objects.equals(partitionName, that.partitionName)
                 && Objects.equals(leaderId, that.leaderId)
                 && Objects.equals(leaderEpoch, that.leaderEpoch)
                 && replicas.equals(that.replicas)
@@ -108,6 +156,15 @@ public class BucketMetadata {
 
     @Override
     public int hashCode() {
-        return Objects.hash(bucketId, leaderId, leaderEpoch, replicas, isr);
+        return Objects.hash(
+                tablePath,
+                tableId,
+                partitionId,
+                partitionName,
+                bucketId,
+                leaderId,
+                leaderEpoch,
+                replicas,
+                isr);
     }
 }

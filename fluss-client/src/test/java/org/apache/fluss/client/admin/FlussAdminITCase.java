@@ -58,6 +58,7 @@ import org.apache.fluss.exception.TooManyPartitionsException;
 import org.apache.fluss.fs.FsPath;
 import org.apache.fluss.fs.FsPathAndFileName;
 import org.apache.fluss.metadata.AggFunctions;
+import org.apache.fluss.metadata.BucketInfo;
 import org.apache.fluss.metadata.DatabaseChange;
 import org.apache.fluss.metadata.DatabaseDescriptor;
 import org.apache.fluss.metadata.DatabaseInfo;
@@ -1144,6 +1145,79 @@ class FlussAdminITCase extends ClientToServerITCaseBase {
                 .cause()
                 .isInstanceOf(FlussRuntimeException.class)
                 .hasMessageContaining("table don't contains this partitionKey: pt1");
+    }
+
+    @Test
+    void testDescribeBuckets() throws Exception {
+        TableInfo defaultTableInfo = admin.getTableInfo(DEFAULT_TABLE_PATH).get();
+        List<BucketInfo> defaultBucketInfos = waitAndDescribeBuckets(DEFAULT_TABLE_PATH, 3);
+        assertThat(defaultBucketInfos)
+                .extracting(BucketInfo::getBucketId)
+                .containsExactlyInAnyOrder(0, 1, 2);
+        for (BucketInfo bucketInfo : defaultBucketInfos) {
+            assertBucketInfo(bucketInfo, DEFAULT_TABLE_PATH, defaultTableInfo.getTableId(), null);
+            assertThat(bucketInfo.getPartitionName()).isNull();
+            assertThat(bucketInfo.getPartitionId().isPresent()).isFalse();
+        }
+        assertThatThrownBy(
+                        () ->
+                                admin.describeBuckets(
+                                                DEFAULT_TABLE_PATH, newPartitionSpec("pt", "p1"))
+                                        .get())
+                .cause()
+                .isInstanceOf(TableNotPartitionedException.class);
+
+        TableDescriptor partitionedTable =
+                TableDescriptor.builder()
+                        .schema(
+                                Schema.newBuilder()
+                                        .column("id", DataTypes.STRING())
+                                        .column("name", DataTypes.STRING())
+                                        .column("pt", DataTypes.STRING())
+                                        .build())
+                        .distributedBy(2, "id")
+                        .partitionedBy("pt")
+                        .build();
+        TablePath partitionedTablePath =
+                TablePath.of(DEFAULT_TABLE_PATH.getDatabaseName(), "test_describe_buckets");
+        admin.createTable(partitionedTablePath, partitionedTable, true).get();
+        PartitionSpec p1PartitionSpec = newPartitionSpec("pt", "p1");
+        admin.createPartition(partitionedTablePath, p1PartitionSpec, false).get();
+        admin.createPartition(partitionedTablePath, newPartitionSpec("pt", "p2"), false).get();
+        Map<String, Long> partitionIds =
+                admin.listPartitionInfos(partitionedTablePath).get().stream()
+                        .collect(
+                                Collectors.toMap(
+                                        PartitionInfo::getPartitionName,
+                                        PartitionInfo::getPartitionId));
+        TableInfo partitionedTableInfo = admin.getTableInfo(partitionedTablePath).get();
+
+        List<BucketInfo> partitionBucketInfos = waitAndDescribeBuckets(partitionedTablePath, 4);
+        assertThat(
+                        partitionBucketInfos.stream()
+                                .map(BucketInfo::getPartitionName)
+                                .collect(Collectors.toList()))
+                .containsExactlyInAnyOrder("p1", "p1", "p2", "p2");
+        for (BucketInfo bucketInfo : partitionBucketInfos) {
+            assertBucketInfo(
+                    bucketInfo,
+                    partitionedTablePath,
+                    partitionedTableInfo.getTableId(),
+                    partitionIds.get(bucketInfo.getPartitionName()));
+            assertThat(bucketInfo.getPartitionId().isPresent()).isTrue();
+        }
+
+        List<BucketInfo> p1BucketInfos =
+                waitAndDescribeBuckets(partitionedTablePath, p1PartitionSpec, 2);
+        assertThat(p1BucketInfos).extracting(BucketInfo::getBucketId).containsExactly(0, 1);
+        assertThat(p1BucketInfos).extracting(BucketInfo::getPartitionName).containsOnly("p1");
+        for (BucketInfo bucketInfo : p1BucketInfos) {
+            assertBucketInfo(
+                    bucketInfo,
+                    partitionedTablePath,
+                    partitionedTableInfo.getTableId(),
+                    partitionIds.get("p1"));
+        }
     }
 
     @Test
@@ -2412,5 +2486,55 @@ class FlussAdminITCase extends ClientToServerITCaseBase {
                 .rootCause()
                 .isInstanceOf(NetworkException.class)
                 .hasMessageContaining("connection timed out");
+    }
+
+    private List<BucketInfo> waitAndDescribeBuckets(TablePath tablePath, int expectedBucketCount)
+            throws Exception {
+        return waitAndDescribeBuckets(tablePath, null, expectedBucketCount);
+    }
+
+    private List<BucketInfo> waitAndDescribeBuckets(
+            TablePath tablePath, @Nullable PartitionSpec partitionSpec, int expectedBucketCount)
+            throws Exception {
+        waitUntil(
+                () -> {
+                    List<BucketInfo> bucketInfos =
+                            partitionSpec == null
+                                    ? admin.describeBuckets(tablePath).get()
+                                    : admin.describeBuckets(tablePath, partitionSpec).get();
+                    return bucketInfos.size() == expectedBucketCount
+                            && bucketInfos.stream()
+                                    .allMatch(
+                                            bucketInfo ->
+                                                    bucketInfo.getLeaderId().isPresent()
+                                                            && bucketInfo
+                                                                    .getLeaderEpoch()
+                                                                    .isPresent()
+                                                            && !bucketInfo.getIsr().isEmpty());
+                },
+                Duration.ofMinutes(1),
+                "Waiting for bucket metadata");
+        return partitionSpec == null
+                ? admin.describeBuckets(tablePath).get()
+                : admin.describeBuckets(tablePath, partitionSpec).get();
+    }
+
+    private static void assertBucketInfo(
+            BucketInfo bucketInfo,
+            TablePath tablePath,
+            long tableId,
+            @Nullable Long expectedPartitionId) {
+        assertThat(bucketInfo.getTablePath()).isEqualTo(tablePath);
+        assertThat(bucketInfo.getTableId()).isEqualTo(tableId);
+        if (expectedPartitionId == null) {
+            assertThat(bucketInfo.getPartitionId().isPresent()).isFalse();
+        } else {
+            assertThat(bucketInfo.getPartitionId().isPresent()).isTrue();
+            assertThat(bucketInfo.getPartitionId().getAsLong()).isEqualTo(expectedPartitionId);
+        }
+        assertThat(bucketInfo.getReplicas()).hasSize(3);
+        assertThat(bucketInfo.getIsr()).isNotEmpty();
+        assertThat(bucketInfo.getReplicas()).containsAll(bucketInfo.getIsr());
+        assertThat(bucketInfo.getIsr()).contains(bucketInfo.getLeaderId().getAsInt());
     }
 }
